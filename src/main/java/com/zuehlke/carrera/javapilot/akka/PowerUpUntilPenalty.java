@@ -200,8 +200,9 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
         // Do we want to show gyro values ?
         //show((int) gyrz);
-
+        System.out.println(currentPhase.name());
         switch (currentPhase) {
+
             case DISCOVERY:
                 discover(message);
                 break;
@@ -236,6 +237,12 @@ public class PowerUpUntilPenalty extends UntypedActor {
             System.out.println(track);
             System.out.println(directionChange);
             lap = TrackPattern.recognize(track);
+
+            if (track.length() > 40) {
+                track = "";
+                map.clear();
+                discov_times.clear();
+            }
             if (!lap.isEmpty()) {
 
                 currentPhase = PHASE_E.SAFESPEED;
@@ -350,12 +357,12 @@ public class PowerUpUntilPenalty extends UntypedActor {
             currentSectionIndex = (currentSectionIndex + 1) % lap.length();
 
             if (s.direction.equals("S")) {
-                wait_timestamp = (s.lengthInSeconds * 25) / 100;
-                currentPower = 170;
-                next_power_value = 50;
+                wait_timestamp = (s.lengthInSeconds * 20) / 100;
+                currentPower = 165;
+                next_power_value = 80;
                 optimizeBeginTimestamp = message.getTimeStamp();
             } else if (s.direction.equals("L") || s.direction.equals("R")) {
-                wait_timestamp = (s.lengthInSeconds * 45) / 100;
+                wait_timestamp = (s.lengthInSeconds * 60) / 100;
                 next_power_value = (int) safePower;
             }
 

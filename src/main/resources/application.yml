@@ -10,13 +10,13 @@ javapilot:
     #name:           Testosterons  # Id of this simulator. Should be unique.
     #accessCode:     krodudida # the access code provided by the race management at registration
 
-    name: Hairy Harries
-    accessCode: bowobüre
+    name: BitsPlease
+    accessCode: glurobiza
 
     #name: starterkit
     #accessCode: tikretrats
 
-    rabbitUrl:      localhost #192.168.1.142
+    rabbitUrl:      192.168.1.142
 
     #relayUrl:  ws://relay2.beta.swisscloud.io/ws/rest/messages # Address of relay in SC cloud !
 
