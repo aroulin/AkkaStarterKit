@@ -26,8 +26,6 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     private final int MAX_POWER = 160;
 
-    private final int LONG_STRAIGHT_THRESHOLD = 200;
-
     private final int LONG_STRAIGHT_PREFERRED_POWER = 140;
 
     private int maxNbLastGyrozValues = 10;
@@ -114,10 +112,10 @@ public class PowerUpUntilPenalty extends UntypedActor {
         probing = false;
 
         if (weDiscoveredTheMap) {
-            int pos = myPositionOnTheTrackIs - 1;
-            if (pos < 0)
-                pos = map.size() - 1;
-            map.get(pos).preferredPower -= 10;
+            for(Section s: map) {
+                if (s.type == 'S')
+                    s.preferredPower -= 5;
+            }
         }
     }
 
@@ -257,9 +255,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
                 if (section.type != 'S')
                     continue;
                 section.S_cnt = S_cnts.get(j);
-                if (section.S_cnt > LONG_STRAIGHT_THRESHOLD) {
-                    section.preferredPower = LONG_STRAIGHT_PREFERRED_POWER;
-                }
+                section.preferredPower = LONG_STRAIGHT_PREFERRED_POWER;
                 j--;
             }
 
@@ -270,8 +266,11 @@ public class PowerUpUntilPenalty extends UntypedActor {
             int pos = myPositionOnTheTrackIs - 1;
             if (pos < 0)
                 pos = map.size() - 1;
-            System.out.println("Pilot going at " + map.get(pos).preferredPower );
-            kobayashi.tell(new PowerAction(map.get(pos).preferredPower), getSelf());
+            int power = map.get(pos).preferredPower;
+            if (S_cnt > 0.70 * map.get(pos).S_cnt)
+                power = INITIAL_POWER-20;
+            System.out.println("Pilot going at " + power );
+            kobayashi.tell(new PowerAction(power), getSelf());
         } else {
             kobayashi.tell(new PowerAction((int) currentPower), getSelf());
         }
