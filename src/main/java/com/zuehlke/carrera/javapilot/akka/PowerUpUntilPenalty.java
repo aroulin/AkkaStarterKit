@@ -27,7 +27,18 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     private SECTION currentSection = SECTION.STILL_STANDING;
 
+    private ArrayList<SECTION> track = new ArrayList<SECTION>(), compareTrack = new ArrayList<SECTION>();
+    private ArrayList<SECTION> checkTrack = new ArrayList<SECTION>();
+
+    private int indexCompareTrack = 0;
+
+    private boolean newSection = false;
+
+    private boolean trackFound = false;
+
     private FloatingHistory gyrozHistory = new FloatingHistory(8);
+
+    private ArrayList<Double> lastValues = new ArrayList<Double>();
 
     enum SECTION {
         STILL_STANDING,
@@ -76,12 +87,58 @@ public class PowerUpUntilPenalty extends UntypedActor {
         lastIncrease = 0;
         gyrozHistory = new FloatingHistory(8);
         currentSection = SECTION.STILL_STANDING;
+        indexCompareTrack = 0;
+        newSection = false;
+        trackFound = false;
+        lastValues.clear();
     }
 
     private void handlePenaltyMessage() {
         currentPower -= 10;
         kobayashi.tell(new PowerAction((int)currentPower), getSelf());
     }
+
+    private int nbLastValues = 4;
+
+    private boolean isLeftCurve(ArrayList<Double> lastValues) {
+        if (lastValues.size() < nbLastValues)
+            return false;
+
+        for (Double f: lastValues) {
+            if (f >= -500) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private boolean isRightCurve(ArrayList<Double> lastValues) {
+        if (lastValues.size() < nbLastValues)
+            return false;
+
+        for (Double f: lastValues) {
+            if (f <= 500) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private boolean isStraight(ArrayList<Double> lastValues) {
+        if (lastValues.size() < nbLastValues)
+            return false;
+
+        for (Double f: lastValues) {
+            if (f < -500 || f > 500) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
 
     /**
      * Strategy: increase quickly when standing still to overcome haptic friction
@@ -91,20 +148,61 @@ public class PowerUpUntilPenalty extends UntypedActor {
     private void handleSensorEvent(SensorEvent message) {
 
         double gyrz = gyrozHistory.shift(message.getG()[2]);
-         show ((int)gyrz);
+        if (lastValues.size() == nbLastValues) {
+            lastValues.remove(0);
+        }
+        lastValues.add(gyrz);
+
+        show ((int)gyrz);
 
         if (iAmStillStanding()) {
             increase(0.5);
         } else {
-            if (gyrz < -500 && currentSection != SECTION.LEFT_CURVE) {
+            if (isLeftCurve(lastValues) && currentSection != SECTION.LEFT_CURVE && currentSection != SECTION.RIGHT_CURVE) {
                 currentSection = SECTION.LEFT_CURVE;
+                newSection = true;
                 System.out.println("Entering Left Curve");
-            } else if (gyrz > 500 && currentSection != SECTION.RIGHT_CURVE) {
+            } else if (isRightCurve(lastValues) && currentSection != SECTION.RIGHT_CURVE && currentSection != SECTION.LEFT_CURVE) {
                 currentSection = SECTION.RIGHT_CURVE;
+                newSection = true;
                 System.out.println("Entering Right curve");
-            } else if (gyrz <= 500 && gyrz >= -500 && currentSection != SECTION.STRAIGHT){
+            } else if (isStraight(lastValues) && currentSection != SECTION.STRAIGHT){
                 currentSection = SECTION.STRAIGHT;
+                newSection = true;
                 System.out.println("Entering straight section");
+            }
+
+            if (newSection && !trackFound) {
+
+                if (track.size() < 9) {
+                    track.add(currentSection);
+                } else {
+                    do {
+                        if (track.get(compareTrack.size()) == currentSection) {
+                            compareTrack.add(currentSection);
+                            break;
+                        } else if (compareTrack.isEmpty()) {
+                            track.add(currentSection);
+                            break;
+                        } else {
+                            do  {
+                                track.add(compareTrack.remove(0));
+                            } while (!compareTrack.isEmpty() && !track.subList(0, compareTrack.size()).equals(compareTrack));
+                        }
+                    } while (true);
+                }
+                newSection = false;
+
+                if (track.equals(compareTrack)) {
+                    trackFound = true;
+                    System.out.println(compareTrack.toString());
+                }
+            /*} else if (newSection && trackFound){
+                checkTrack.add(currentSection);
+                if (!track.subList(0, checkTrack.size()).equals(checkTrack)) {
+
+                }
+                }*/
             }
         }
 
