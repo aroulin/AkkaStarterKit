@@ -9,6 +9,8 @@ import com.zuehlke.carrera.relayapi.messages.SensorEvent;
 import com.zuehlke.carrera.timeseries.FloatingHistory;
 import org.apache.commons.lang.StringUtils;
 
+import java.util.ArrayList;
+
 /**
  *  this logic node increases the power level by 10 units per 0.5 second until it receives a penalty
  *  then reduces by ten units.
@@ -21,11 +23,18 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     private long lastIncrease = 0;
 
-    private int maxPower = 180; // Max for this phase;
+    private final int constantPower = 110;
 
-    private boolean probing = true;
+    private SECTION currentSection = SECTION.STILL_STANDING;
 
     private FloatingHistory gyrozHistory = new FloatingHistory(8);
+
+    enum SECTION {
+        STILL_STANDING,
+        STRAIGHT,
+        LEFT_CURVE,
+        RIGHT_CURVE
+    }
 
     /**
      * @param pilotActor The central pilot actor
@@ -65,15 +74,13 @@ public class PowerUpUntilPenalty extends UntypedActor {
     private void handleRaceStart() {
         currentPower = 0;
         lastIncrease = 0;
-        maxPower = 180; // Max for this phase;
-        probing = true;
         gyrozHistory = new FloatingHistory(8);
+        currentSection = SECTION.STILL_STANDING;
     }
 
     private void handlePenaltyMessage() {
         currentPower -= 10;
         kobayashi.tell(new PowerAction((int)currentPower), getSelf());
-        probing = false;
     }
 
     /**
@@ -86,12 +93,18 @@ public class PowerUpUntilPenalty extends UntypedActor {
         double gyrz = gyrozHistory.shift(message.getG()[2]);
          show ((int)gyrz);
 
-        if (probing) {
-            if (iAmStillStanding()) {
-                increase(0.5);
-            } else if (message.getTimeStamp() > lastIncrease + duration) {
-                lastIncrease = message.getTimeStamp();
-                increase(3);
+        if (iAmStillStanding()) {
+            increase(0.5);
+        } else {
+            if (gyrz < -500 && currentSection != SECTION.LEFT_CURVE) {
+                currentSection = SECTION.LEFT_CURVE;
+                System.out.println("Entering Left Curve");
+            } else if (gyrz > 500 && currentSection != SECTION.RIGHT_CURVE) {
+                currentSection = SECTION.RIGHT_CURVE;
+                System.out.println("Entering Right curve");
+            } else if (gyrz <= 500 && gyrz >= -500 && currentSection != SECTION.STRAIGHT){
+                currentSection = SECTION.STRAIGHT;
+                System.out.println("Entering straight section");
             }
         }
 
@@ -99,7 +112,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
     }
 
     private int increase ( double val ) {
-        currentPower = Math.min ( currentPower + val, maxPower );
+        currentPower += val;
         return (int)currentPower;
     }
 
