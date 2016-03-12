@@ -22,11 +22,11 @@ public class PowerUpUntilPenalty extends UntypedActor {
     private double currentPower = 0;
 
     // VERY IMPORTANT: TWEAK THEM FOR REAL TRACK OR SIMULATOR
-    private final int INITIAL_POWER = 100;
+    private final int INITIAL_POWER = 105;
 
     private final int MAX_POWER = 160;
 
-    private final int LONG_STRAIGHT_PREFERRED_POWER = 140;
+    private final int LONG_STRAIGHT_PREFERRED_POWER = 125;
 
     private int maxNbLastGyrozValues = 10;
 
@@ -114,7 +114,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
         if (weDiscoveredTheMap) {
             for(Section s: map) {
                 if (s.type == 'S')
-                    s.preferredPower -= 5;
+                    s.preferredPower -= 2;
             }
         }
     }
@@ -244,7 +244,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
             for (Character sectionAsChar: mapAsString.toCharArray()) {
                 Section section = new Section();
                 section.type = sectionAsChar;
-                section.preferredPower = INITIAL_POWER;
+                section.preferredPower = INITIAL_POWER+2;
                 map.add(section);
             }
 
@@ -255,7 +255,10 @@ public class PowerUpUntilPenalty extends UntypedActor {
                 if (section.type != 'S')
                     continue;
                 section.S_cnt = S_cnts.get(j);
-                section.preferredPower = LONG_STRAIGHT_PREFERRED_POWER;
+                if (section.S_cnt > 140)
+                    section.preferredPower = LONG_STRAIGHT_PREFERRED_POWER + 20;
+                else
+                    section.preferredPower = LONG_STRAIGHT_PREFERRED_POWER;
                 j--;
             }
 
@@ -267,8 +270,9 @@ public class PowerUpUntilPenalty extends UntypedActor {
             if (pos < 0)
                 pos = map.size() - 1;
             int power = map.get(pos).preferredPower;
-            if (S_cnt > 0.70 * map.get(pos).S_cnt)
-                power = INITIAL_POWER-20;
+            double factor = map.get(pos).S_cnt > 140 ? 0.80 : 0.35;
+            if (S_cnt > factor * map.get(pos).S_cnt)
+                power = map.get(pos).S_cnt > 140 ? INITIAL_POWER : INITIAL_POWER - 25;
             System.out.println("Pilot going at " + power );
             kobayashi.tell(new PowerAction(power), getSelf());
         } else {
@@ -287,7 +291,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     private void show(int gyr2) {
         int scale = 120 * (gyr2 - (-10000)) / 20000;
-        System.out.println(StringUtils.repeat(" ", scale) + gyr2);
+        //System.out.println(StringUtils.repeat(" ", scale) + gyr2);
     }
 
 
