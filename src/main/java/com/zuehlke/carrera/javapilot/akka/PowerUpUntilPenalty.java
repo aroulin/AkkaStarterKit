@@ -25,7 +25,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     // Phase variables
     private PHASE_E prevPhase;
-    private PHASE_E currentPhase = PHASE_E.DISCOVERY;
+    private PHASE_E currentPhase = PHASE_E.WARMUP;
 
     // Safe power computation variables
     private double safePower = INITIAL_POWER;
@@ -112,6 +112,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
         currentPower = 0;
         currentSection = SECTION_E.STILL_STANDING;
         currentSectionIndex = 0;
+        currentPhase = PHASE_E.WARMUP;
 
         // Safe power computation variables
         safePower = INITIAL_POWER;
@@ -192,6 +193,8 @@ public class PowerUpUntilPenalty extends UntypedActor {
         return true;
     }
 
+    private PHASE_E previousPhase;
+
     /**
      * Strategy: increase quickly when standing still to overcome haptic friction
      * then increase slowly. Probing currentPhase will be ended by the first penalty
@@ -209,6 +212,11 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
         // Do we want to show gyro values ?
         //show((int) gyrz);
+
+        if (previousPhase != currentPhase) {
+            System.out.println(currentPhase);
+            previousPhase = currentPhase;
+        }
 
         switch (currentPhase) {
             case WARMUP:
@@ -249,9 +257,9 @@ public class PowerUpUntilPenalty extends UntypedActor {
             }
             discov_times.add(message.getTimeStamp());
             track = track + directionChange;
-            System.out.println(discov_times);
+            //System.out.println(discov_times);
             addMap(directionChange, 0, currentPower);
-            System.out.println(map);
+            //System.out.println(map);
             System.out.println(track);
             System.out.println(directionChange);
             lap = TrackPattern.recognize(track);
@@ -259,7 +267,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
                 currentPhase = PHASE_E.SAFESPEED;
                 addDelays(map, discov_times);
-                System.out.println(map);
+                System.out.println("FOUND" + map);
                 System.out.println(lap);
                 currentSectionIndex = 0;
             }
