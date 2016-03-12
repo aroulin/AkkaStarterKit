@@ -9,64 +9,56 @@ import com.zuehlke.carrera.relayapi.messages.SensorEvent;
 import com.zuehlke.carrera.timeseries.FloatingHistory;
 import org.apache.commons.lang.StringUtils;
 
-import java.lang.reflect.Array;
 import java.util.ArrayList;
 
-/**
- * this logic node increases the power level by 10 units per 0.5 second until it receives a penalty
- * then reduces by ten units.
- */
 public class PowerUpUntilPenalty extends UntypedActor {
 
     private final ActorRef kobayashi;
 
+    // Parameters
+    private final int INITIAL_POWER = 105;
+
+    // Current state variables
     private double currentPower = 0;
-
     private SECTION_E currentSection = SECTION_E.STILL_STANDING;
-
-    private final int MAX_POWER = 255;
-
-    private final int INITIAL_POWER = 100;
-
-    private String track = "";
-
-    private String lap = "";
-
-    private ArrayList<Section> map = new ArrayList<>();
-
-    private boolean newSection = false;
-
     private int currentSectionIndex = 0;
 
-    private boolean probing = true;
+    // Phase variables
+    private PHASE_E prevPhase;
+    private PHASE_E currentPhase = PHASE_E.DISCOVERY;
 
-    private long lastIncrease = 0;
+    // Safe power computation variables
+    private double safePower = INITIAL_POWER;
+    private boolean TryingToIncreaseSafePower = true;
+    private long lastIncreaseTimeToSafePower = 0;
 
-    private boolean weDiscoveredTheMap = false;
-
-    private final int NbGyrozValues = 10;
-
-    private FloatingHistory gyrozHistory = new FloatingHistory(8);
-
-    private final int STANDBY_THRESH = 5;
-
-    private ArrayList<Double> lastGyrozValues = new ArrayList<>();
-
-    private double safeSpeed = INITIAL_POWER;
-
-    private boolean isLost = false;
-
+    // Track related variable
+    private String track = "";
+    private String lap = "";
+    private ArrayList<Section> map = new ArrayList<>();
     private String lostTrack = "";
+
+    // GyroZ variables
+    private final int NB_GYROZ_VALUES_TO_CONSIDER_FOR_SECTION = 10;
+    private FloatingHistory gyrozHistory = new FloatingHistory(8);
+    private ArrayList<Double> lastGyrozValuesAcquired = new ArrayList<>();
 
     public class Section {
         String direction;
         double entry_power;
         double leaving_power;
-        long length;
+        long lengthInSeconds;
 
         public String toString() {
-            return direction + ", " + entry_power +  ", " + leaving_power + ", " + length;
+            return direction + ", " + entry_power + ", " + leaving_power + ", " + lengthInSeconds;
         }
+    }
+
+    enum PHASE_E {
+        DISCOVERY,
+        SAFESPEED,
+        LOST,
+        OPTIMIZE
     }
 
     enum SECTION_E {
@@ -89,7 +81,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
     private final int duration;
 
     public PowerUpUntilPenalty(ActorRef pilotActor, int duration) {
-        lastIncrease = System.currentTimeMillis();
+        lastIncreaseTimeToSafePower = System.currentTimeMillis();
         this.kobayashi = pilotActor;
         this.duration = duration;
     }
@@ -113,38 +105,46 @@ public class PowerUpUntilPenalty extends UntypedActor {
     }
 
     private void handleRaceStart() {
+        // Current state variables
         currentPower = 0;
-        gyrozHistory = new FloatingHistory(8);
         currentSection = SECTION_E.STILL_STANDING;
-        newSection = false;
-        weDiscoveredTheMap = false;
-        lastGyrozValues.clear();
-        lastIncrease = 0;
-        probing = true;
+        currentSectionIndex = 0;
+
+        // Safe power computation variables
+        safePower = INITIAL_POWER;
+        TryingToIncreaseSafePower = true;
+        lastIncreaseTimeToSafePower = 0;
+
+        // Track related variable
         track = "";
         lap = "";
-        isLost=false;
-        lostTrack="";
+        map = new ArrayList<>();
+        lostTrack = "";
+
+        // GyroZ variables
+        gyrozHistory = new FloatingHistory(8);
+        lastGyrozValuesAcquired = new ArrayList<>();
     }
 
     private void handlePenaltyMessage() {
-        if(currentPower < safeSpeed) {
+        System.out.println("Pilot: Oh shit, I got a penalty at speed: " + currentPower);
+        if (currentPower < safePower) {
             currentPower -= 10;
-            safeSpeed = currentPower;
+            safePower = currentPower;
         }
-        System.out.println("PENALTY");
+        System.out.println("Pilot: Reducing safe power and current power to " + safePower);
         kobayashi.tell(new PowerAction((int) currentPower), getSelf());
-        probing = false;
+        TryingToIncreaseSafePower = false;
     }
 
-    private boolean isLeftCurve() {
-        if (lastGyrozValues.size() < NbGyrozValues)
-            return false;
+    private boolean isLeftCurveComingNext() {
+        if (lastGyrozValuesAcquired.size() < NB_GYROZ_VALUES_TO_CONSIDER_FOR_SECTION)
+            return false; // We don't know yet
 
         if (currentSection == SECTION_E.LEFT_CURVE || currentSection == SECTION_E.RIGHT_CURVE)
             return false;
 
-        for (Double f : lastGyrozValues) {
+        for (Double f : lastGyrozValuesAcquired) {
             if (f >= -500)
                 return false;
         }
@@ -152,14 +152,14 @@ public class PowerUpUntilPenalty extends UntypedActor {
         return true;
     }
 
-    private boolean isRightCurve() {
-        if (lastGyrozValues.size() < NbGyrozValues)
-            return false;
+    private boolean isRightCurveComingNext() {
+        if (lastGyrozValuesAcquired.size() < NB_GYROZ_VALUES_TO_CONSIDER_FOR_SECTION)
+            return false; // We don't know yet
 
         if (currentSection == SECTION_E.RIGHT_CURVE || currentSection == SECTION_E.LEFT_CURVE)
             return false;
 
-        for (Double f : lastGyrozValues) {
+        for (Double f : lastGyrozValuesAcquired) {
             if (f <= 500)
                 return false;
         }
@@ -167,15 +167,15 @@ public class PowerUpUntilPenalty extends UntypedActor {
         return true;
     }
 
-    private boolean isStraight() {
-        if (lastGyrozValues.size() < NbGyrozValues)
-            return false;
+    private boolean isStraightComingNext() {
+        if (lastGyrozValuesAcquired.size() < NB_GYROZ_VALUES_TO_CONSIDER_FOR_SECTION)
+            return false; // We don't know yet
 
         if (currentSection == SECTION_E.STRAIGHT) {
             return false;
         }
 
-        for (Double f : lastGyrozValues) {
+        for (Double f : lastGyrozValuesAcquired) {
             if (f < -500 || f > 500)
                 return false;
         }
@@ -183,58 +183,51 @@ public class PowerUpUntilPenalty extends UntypedActor {
         return true;
     }
 
-
-
-    enum PHASE_E {
-        DISCOVERY,
-        SAFESPEED,
-        LOST,
-        OPTIMIZE
-    }
-
-    private PHASE_E prevPhase;
-    private PHASE_E phase = PHASE_E.DISCOVERY;
-
     /**
      * Strategy: increase quickly when standing still to overcome haptic friction
-     * then increase slowly. Probing phase will be ended by the first penalty
+     * then increase slowly. Probing currentPhase will be ended by the first penalty
      *
      * @param message the sensor event coming in
      */
     private void handleSensorEvent(SensorEvent message) {
+
+        // Add new gyroZ values to the last values to consider to determine the next section
         double gyrz = gyrozHistory.shift(message.getG()[2]);
-        if (lastGyrozValues.size() == NbGyrozValues) {
-            lastGyrozValues.remove(0);
+        if (lastGyrozValuesAcquired.size() == NB_GYROZ_VALUES_TO_CONSIDER_FOR_SECTION) {
+            lastGyrozValuesAcquired.remove(0);
         }
-        lastGyrozValues.add(gyrz);
+        lastGyrozValuesAcquired.add(gyrz);
+
+        // Do we want to show gyro values ?
         //show((int) gyrz);
 
-        switch(phase) {
+        switch (currentPhase) {
             case DISCOVERY:
                 discover(message);
                 break;
             case SAFESPEED:
-                safespeed(message);
+                safePower(message);
                 break;
             case LOST:
                 lostRecovery(message);
                 break;
             case OPTIMIZE:
-                optimize();
+                optimize(message);
                 break;
         }
         kobayashi.tell(new PowerAction((int) currentPower), getSelf());
     }
 
-    boolean discov_first = true;
+    boolean discovSkipFirstSection = true;
     ArrayList<Long> discov_times = new ArrayList<>();
+
     private void discover(SensorEvent message) {
-        if(isStandingStill() || currentPower < INITIAL_POWER) {
+        if (isStandingStill() || currentPower < INITIAL_POWER) {
             increase(1);
         }
 
         String directionChange = getDirChange();
-        if(!directionChange.isEmpty() && !discov_first) {
+        if (!directionChange.isEmpty() && !discovSkipFirstSection) {
             discov_times.add(message.getTimeStamp());
             track = track + directionChange;
             System.out.println(discov_times);
@@ -245,30 +238,16 @@ public class PowerUpUntilPenalty extends UntypedActor {
             lap = TrackPattern.recognize(track);
             if (!lap.isEmpty()) {
 
-                phase = PHASE_E.SAFESPEED;
+                currentPhase = PHASE_E.SAFESPEED;
                 addDelays(map, discov_times);
                 System.out.println(map);
                 System.out.println(lap);
                 currentSectionIndex = 0;
             }
-        }else if(!directionChange.isEmpty()){
-            discov_first = false;
+        } else if (!directionChange.isEmpty()) {
+            discovSkipFirstSection = false;
         }
 
-    }
-
-    private String strSec(SECTION_E s) {
-        switch(s) {
-            case LEFT_CURVE:
-                return "L";
-            case RIGHT_CURVE:
-                return "R";
-            case STRAIGHT:
-                return "S";
-            case STILL_STANDING:
-                return "";
-        }
-        return "";
     }
 
     private void addMap(String dir, long delay, double power) {
@@ -276,59 +255,60 @@ public class PowerUpUntilPenalty extends UntypedActor {
         s.direction = dir;
         s.entry_power = power;
         s.leaving_power = power;
-        s.length = delay;
+        s.lengthInSeconds = delay;
         map.add(s);
     }
 
     private void addDelays(ArrayList<Section> m, ArrayList<Long> l) {
 
         int n = m.size();
-        for (int i = 0 ; i < n/2 ; i++){
-            m.remove(n-i - 1);
-            m.get(i).length = l.get(i+1) - l.get(i);
+        for (int i = 0; i < n / 2; i++) {
+            m.remove(n - i - 1);
+            m.get(i).lengthInSeconds = l.get(i + 1) - l.get(i);
         }
-
     }
 
 
-    private void safespeed(SensorEvent message) {
+    private void safePower(SensorEvent message) {
 
         String currentStringDirection = getDirChange();
-        if (!currentStringDirection.isEmpty()) {
-            if(lap.charAt(currentSectionIndex) != currentStringDirection.charAt(0)) {
+
+        if (!currentStringDirection.isEmpty()) { // If we change direction
+            if (lap.charAt(currentSectionIndex) != currentStringDirection.charAt(0)) {
                 System.out.println("Got lost ! " + lap.charAt(currentSectionIndex) + " vs " + currentStringDirection.charAt(0));
                 prevPhase = PHASE_E.SAFESPEED;
                 lostRecovery(currentStringDirection);
             } else {
-                if (probing) {
+                if (TryingToIncreaseSafePower) {
                     if (isStandingStill()) {
                         increase(1);
-                    } else if (message.getTimeStamp() > lastIncrease + duration) {
-                        lastIncrease = message.getTimeStamp();
+                    } else if (message.getTimeStamp() > lastIncreaseTimeToSafePower + duration) {
+                        lastIncreaseTimeToSafePower = message.getTimeStamp();
                         increase(3);
                     }
                 } else {
-                    phase = PHASE_E.OPTIMIZE;
+                    currentPhase = PHASE_E.OPTIMIZE;
                 }
             }
-            safeSpeed = Double.max(safeSpeed, currentPower);
-            currentSectionIndex = (currentSectionIndex+1)%lap.length();
-        }
-    }
-    private void lostRecovery(String direction) {
-        lostTrack = lostTrack + direction;
-        phase = PHASE_E.LOST;
-        int i = findIndex();
-        if(i > -1) {
-            currentSectionIndex = (i+lostTrack.length()) % lap.length();
-            lostTrack = "";
-            phase = prevPhase;
+            safePower = Double.max(safePower, currentPower);
+            currentSectionIndex = (currentSectionIndex + 1) % lap.length();
         }
     }
 
-    private void lostRecovery(SensorEvent message){
+    private void lostRecovery(String direction) {
+        lostTrack = lostTrack + direction;
+        currentPhase = PHASE_E.LOST;
+        int i = findIndex();
+        if (i > -1) {
+            currentSectionIndex = (i + lostTrack.length()) % lap.length();
+            lostTrack = "";
+            currentPhase = prevPhase;
+        }
+    }
+
+    private void lostRecovery(SensorEvent message) {
         String dir = getDirChange();
-        if(!dir.isEmpty()){
+        if (!dir.isEmpty()) {
             lostRecovery(dir);
         }
     }
@@ -336,9 +316,9 @@ public class PowerUpUntilPenalty extends UntypedActor {
     private int findIndex() {
         int k = -2;
         int n = lostTrack.length();
-        String lap2 = lap+lap;
-        for(int i = 0; i < lap.length(); i++) {
-            if(lap2.substring(i, i+n).equals(lostTrack)) {
+        String lap2 = lap + lap;
+        for (int i = 0; i < lap.length(); i++) {
+            if (lap2.substring(i, i + n).equals(lostTrack)) {
                 if (k == -2) {
                     k = i;
                 } else {
@@ -346,30 +326,60 @@ public class PowerUpUntilPenalty extends UntypedActor {
                 }
             }
         }
-        if(k == -2) {
+        if (k == -2) {
             lostTrack = "";
         }
         return k;
     }
 
-    private void optimize() {
-        String dir = getDirChange();
-        if(!dir.isEmpty()) {
-            
-        }
+    long wait_timestamp = 0;
+    final int BIG_STRAIGHT_LENGTH_THRESHOLD = 1500;
+    //final long BIG_STRAIGHT_TIMESTAMP_WAIT = 100;
 
+    long optimizeBeginTimestamp;
+    int next_power_value = 0;
+
+    private void optimize(SensorEvent message) {
+        String dir = getDirChange();
+
+        if (!dir.isEmpty()) {
+
+            optimizeBeginTimestamp = 0;
+
+            Section s = map.get(currentSectionIndex);
+            currentSectionIndex = (currentSectionIndex + 1) % lap.length();
+
+            if (s.direction.equals("S")) {
+                wait_timestamp = (s.lengthInSeconds * 25) / 100;
+                currentPower = 170;
+                next_power_value = 50;
+                optimizeBeginTimestamp = message.getTimeStamp();
+            } else if (s.direction.equals("L") || s.direction.equals("R")) {
+                wait_timestamp = (s.lengthInSeconds * 45) / 100;
+                next_power_value = (int) safePower;
+            }
+
+        } else {
+            long optimizeTimestampCurrent = message.getTimeStamp();
+            if (optimizeTimestampCurrent - optimizeBeginTimestamp > wait_timestamp) {
+                optimizeBeginTimestamp = 0;
+                wait_timestamp = 0;
+
+                currentPower = next_power_value;
+            }
+        }
     }
 
     private String getDirChange() {
-        if(isLeftCurve()) {
+        if (isLeftCurveComingNext()) {
             currentSection = SECTION_E.LEFT_CURVE;
             return "L";
         }
-        if(isRightCurve()){
+        if (isRightCurveComingNext()) {
             currentSection = SECTION_E.RIGHT_CURVE;
             return "R";
         }
-        if(isStraight()){
+        if (isStraightComingNext()) {
             currentSection = SECTION_E.STRAIGHT;
             return "S";
         }
@@ -377,13 +387,14 @@ public class PowerUpUntilPenalty extends UntypedActor {
     }
 
     private int increase(double val) {
+        final int MAX_POWER = 200;
         currentPower = Math.min(currentPower + val, MAX_POWER);
         return (int) currentPower;
     }
 
     private boolean isStandingStill() {
-        boolean t = gyrozHistory.currentStDev() < STANDBY_THRESH;
-        return t;
+        int STANDBY_THRESH = 5;
+        return gyrozHistory.currentStDev() < STANDBY_THRESH;
     }
 
     private void show(int gyr2) {
