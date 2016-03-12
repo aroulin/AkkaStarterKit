@@ -23,7 +23,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     private SECTION currentSection = SECTION.STILL_STANDING;
 
-    private ArrayList<SECTION> track = new ArrayList<>(), compareTrack = new ArrayList<>();
+    private String track = "";
 
     private boolean newSection = false;
 
@@ -82,6 +82,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
         newSection = false;
         trackFound = false;
         lastGyrozValues.clear();
+        track = "";
     }
 
     private void handlePenaltyMessage() {
@@ -150,7 +151,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
             lastGyrozValues.remove(0);
         }
         lastGyrozValues.add(gyrz);
-        show((int) gyrz);
+        //show((int) gyrz);
 
         if (iAmStillStanding()) {
             increase(2);
@@ -160,46 +161,24 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
         if (isLeftCurve(lastGyrozValues)) {
             currentSection = SECTION.LEFT_CURVE;
-            newSection = true;
+            track = track + 'L';
+            System.out.println(track);
             System.out.println("Entering Left Curve");
         } else if (isRightCurve(lastGyrozValues)) {
             currentSection = SECTION.RIGHT_CURVE;
-            newSection = true;
+            track = track + 'R';
+            System.out.println(track);
             System.out.println("Entering Right curve");
         } else if (isStraight(lastGyrozValues)) {
             currentSection = SECTION.STRAIGHT;
-            newSection = true;
+            track = track + 'S';
+            System.out.println(track);
             System.out.println("Entering straight section");
         }
 
-        if (newSection && !trackFound) {
-            newSection = false;
-
-            if (track.size() < 10) {
-                track.add(currentSection);
-                kobayashi.tell(new PowerAction((int) currentPower), getSelf());
-                return;
-            }
-
-            do {
-                if (track.get(compareTrack.size()) == currentSection) {
-                    compareTrack.add(currentSection);
-                    break;
-                } else if (compareTrack.isEmpty()) {
-                    track.add(currentSection);
-                    break;
-                } else {
-                    do {
-                        track.add(compareTrack.remove(0));
-                    }
-                    while (!compareTrack.isEmpty() && !track.subList(0, compareTrack.size()).equals(compareTrack));
-                }
-            } while (true);
-
-            if (track.equals(compareTrack)) {
-                trackFound = true;
-                System.out.println(compareTrack.toString());
-            }
+        if (!trackFound && !TrackPattern.recognize(track).isEmpty()) {
+            trackFound = true;
+            System.out.println("FOUND: " + TrackPattern.recognize(track));
         }
 
         kobayashi.tell(new PowerAction((int) currentPower), getSelf());
