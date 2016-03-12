@@ -21,7 +21,9 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     private double currentPower = 0;
 
-    private final int INITIAL_POWER = 110;
+    private final int INITIAL_POWER = 70;
+
+    private final int MAX_POWER = 160;
 
     private SECTION currentSection = SECTION.STILL_STANDING;
 
@@ -101,7 +103,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
         probing = false;
     }
 
-    private int maxNbLastGyrozValues = 4;
+    private int maxNbLastGyrozValues = 10;
 
     private boolean isLeftCurve(ArrayList<Double> lastValues) {
         if (lastValues.size() < maxNbLastGyrozValues)
@@ -133,12 +135,16 @@ public class PowerUpUntilPenalty extends UntypedActor {
         return true;
     }
 
+    private int S_cnt = 0;
+
     private boolean isStraight(ArrayList<Double> lastValues) {
         if (lastValues.size() < maxNbLastGyrozValues)
             return false;
 
-        if (currentSection == SECTION.STRAIGHT)
+        if (currentSection == SECTION.STRAIGHT) {
+            S_cnt++;
             return false;
+        }
 
         for (Double f : lastValues) {
             if (f < -500 || f > 500)
@@ -162,10 +168,10 @@ public class PowerUpUntilPenalty extends UntypedActor {
             lastGyrozValues.remove(0);
         }
         lastGyrozValues.add(gyrz);
-        //show((int) gyrz);
+        show((int) gyrz);
 
         if (iAmStillStanding()) {
-            increase(2);
+            increase(1);
             kobayashi.tell(new PowerAction((int) currentPower), getSelf());
             return;
         }
@@ -174,19 +180,23 @@ public class PowerUpUntilPenalty extends UntypedActor {
             increase(1);
         }
 
-        if (trackFound && probing && message.getTimeStamp() > lastIncrease + duration) {
+        if (trackFound && probing && message.getTimeStamp() > lastIncrease + 20000) {
             lastIncrease = message.getTimeStamp();
-            increase(3);
+            increase(10);
         }
 
         if (isLeftCurve(lastGyrozValues)) {
             currentSection = SECTION.LEFT_CURVE;
             track = track + 'L';
+            System.out.println("S_cnt: " + S_cnt);
+            S_cnt = 0;
             System.out.println(track);
             System.out.println("Entering Left Curve");
         } else if (isRightCurve(lastGyrozValues)) {
             currentSection = SECTION.RIGHT_CURVE;
             track = track + 'R';
+            System.out.println("S_cnt: " + S_cnt);
+            S_cnt = 0;
             System.out.println(track);
             System.out.println("Entering Right curve");
         } else if (isStraight(lastGyrozValues)) {
@@ -205,7 +215,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
     }
 
     private int increase(double val) {
-        currentPower += val;
+        currentPower = Math.min(currentPower + val, MAX_POWER);
         return (int) currentPower;
     }
 
