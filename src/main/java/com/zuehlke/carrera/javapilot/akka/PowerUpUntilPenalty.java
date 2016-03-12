@@ -21,11 +21,17 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     private double currentPower = 0;
 
+    private final int INITIAL_POWER = 110;
+
     private SECTION currentSection = SECTION.STILL_STANDING;
 
     private String track = "";
 
     private boolean newSection = false;
+
+    private boolean probing = true;
+
+    private long lastIncrease = 0;
 
     private boolean trackFound = false;
 
@@ -53,6 +59,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
     private final int duration;
 
     public PowerUpUntilPenalty(ActorRef pilotActor, int duration) {
+        lastIncrease = System.currentTimeMillis();
         this.kobayashi = pilotActor;
         this.duration = duration;
     }
@@ -82,12 +89,16 @@ public class PowerUpUntilPenalty extends UntypedActor {
         newSection = false;
         trackFound = false;
         lastGyrozValues.clear();
+        lastIncrease = 0;
+        probing = true;
         track = "";
     }
 
     private void handlePenaltyMessage() {
         currentPower -= 10;
+        System.out.println("PENALTY");
         kobayashi.tell(new PowerAction((int) currentPower), getSelf());
+        probing = false;
     }
 
     private int maxNbLastGyrozValues = 4;
@@ -157,6 +168,15 @@ public class PowerUpUntilPenalty extends UntypedActor {
             increase(2);
             kobayashi.tell(new PowerAction((int) currentPower), getSelf());
             return;
+        }
+
+        if (!trackFound && currentPower < INITIAL_POWER) {
+            increase(1);
+        }
+
+        if (trackFound && probing && message.getTimeStamp() > lastIncrease + duration) {
+            lastIncrease = message.getTimeStamp();
+            increase(3);
         }
 
         if (isLeftCurve(lastGyrozValues)) {
