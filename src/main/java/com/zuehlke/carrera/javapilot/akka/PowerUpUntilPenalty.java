@@ -3,7 +3,6 @@ package com.zuehlke.carrera.javapilot.akka;
 import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.actor.UntypedActor;
-import com.fasterxml.jackson.annotation.ObjectIdGenerators;
 import com.zuehlke.carrera.relayapi.messages.PenaltyMessage;
 import com.zuehlke.carrera.relayapi.messages.RaceStartMessage;
 import com.zuehlke.carrera.relayapi.messages.SensorEvent;
@@ -58,6 +57,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
     }
 
     enum PHASE_E {
+        WARMUP,
         DISCOVERY,
         SAFESPEED,
         LOST,
@@ -211,6 +211,8 @@ public class PowerUpUntilPenalty extends UntypedActor {
         //show((int) gyrz);
 
         switch (currentPhase) {
+            case WARMUP:
+                warmup(message);
             case DISCOVERY:
                 discover(message);
                 break;
@@ -227,15 +229,19 @@ public class PowerUpUntilPenalty extends UntypedActor {
         kobayashi.tell(new PowerAction((int) currentPower), getSelf());
     }
 
+    private void warmup(SensorEvent message) {
+        if (isStandingStill() || currentPower < INITIAL_POWER) {
+            increase(1);
+        } else {
+            currentPhase = PHASE_E.DISCOVERY;
+        }
+    }
+
     boolean discovSkipFirstSection = true;
     ArrayList<Long> discov_times = new ArrayList<>();
     long discoverBegin;
 
     private void discover(SensorEvent message) {
-        if (isStandingStill() || currentPower < INITIAL_POWER) {
-            increase(1);
-        }
-
         String directionChange = getDirChange();
         if (!directionChange.isEmpty() && !discovSkipFirstSection) {
             if(message.getTimeStamp() - discoverBegin > 60000) {
