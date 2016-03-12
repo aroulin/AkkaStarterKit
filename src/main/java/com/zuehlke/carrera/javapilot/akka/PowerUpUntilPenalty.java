@@ -212,7 +212,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
         switch (currentPhase) {
             case WARMUP:
-                warmup(message);
+                warmup();
             case DISCOVERY:
                 discover(message);
                 break;
@@ -220,7 +220,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
                 safePower(message);
                 break;
             case LOST:
-                lostRecovery(message);
+                lostRecovery();
                 break;
             case OPTIMIZE:
                 optimize(message);
@@ -229,7 +229,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
         kobayashi.tell(new PowerAction((int) currentPower), getSelf());
     }
 
-    private void warmup(SensorEvent message) {
+    private void warmup() {
         if (isStandingStill() || currentPower < INITIAL_POWER) {
             increase(1);
         } else {
@@ -317,14 +317,12 @@ public class PowerUpUntilPenalty extends UntypedActor {
     }
 
     private void optMap() {
-        for(Section s : map) {
-            if(s.direction == "S") {
-                s.entry_power = (safePower)*1.1;
-                s.leaving_power = (INITIAL_POWER);
-                s.dt = (long) (s.lengthInSeconds * 0.2);
-                s.downgraded = false;
-            }
-        }
+        map.stream().filter(s -> s.direction.equals("S")).forEach(s -> {
+            s.entry_power = (safePower) * 1.1;
+            s.leaving_power = (INITIAL_POWER);
+            s.dt = (long) (s.lengthInSeconds * 0.2);
+            s.downgraded = false;
+        });
     }
 
     private void lostRecovery(String direction) {
@@ -338,7 +336,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
         }
     }
 
-    private void lostRecovery(SensorEvent message) {
+    private void lostRecovery() {
         String dir = getDirChange();
         if (!dir.isEmpty()) {
             lostRecovery(dir);
@@ -365,8 +363,6 @@ public class PowerUpUntilPenalty extends UntypedActor {
     }
 
     long wait_timestamp = 0;
-    final int BIG_STRAIGHT_LENGTH_THRESHOLD = 1500;
-    //final long BIG_STRAIGHT_TIMESTAMP_WAIT = 100;
 
     long optimizeBeginTimestamp;
     double next_power_value = 0;
