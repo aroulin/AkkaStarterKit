@@ -21,14 +21,12 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     private double currentPower = 0;
 
-    private final int INITIAL_POWER = 110;
-
-    private SECTION currentSection = SECTION.STILL_STANDING;
+    private SECTION_E currentSection = SECTION_E.STILL_STANDING;
 
     private String track = "";
 
     // For getting our way after a stop
-    private int current_position_index = 0;
+    private int myPositionOnTheTrackIs = 0;
     private String track_since_lost = "";
     private boolean is_lost = true;
 
@@ -40,17 +38,39 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     private long lastIncrease = 0;
 
-    private boolean trackFound = false;
+    private boolean weDiscoveredTheMap = false;
+
+    // VERY IMPORTANT: TWEAK THEM FOR REAL TRACK OR SIMULATOR
+    private final int INITIAL_POWER = 100;
+
+    private final int MAX_POWER = 160;
+
+    private final int LONG_STRAIGHT_THRESHOLD = 200;
+
+    private final int LONG_STRAIGHT_PREFERRED_POWER = 140;
+
+    private int S_cnt = 0;
+
+    private int maxNbLastGyrozValues = 10;
 
     private FloatingHistory gyrozHistory = new FloatingHistory(8);
 
     private ArrayList<Double> lastGyrozValues = new ArrayList<>();
 
-    enum SECTION {
+    enum SECTION_E {
         STILL_STANDING,
         STRAIGHT,
         LEFT_CURVE,
         RIGHT_CURVE
+    }
+
+    private ArrayList<Section> map = new ArrayList<Section>();
+    private ArrayList<Integer> S_cnts = new ArrayList<Integer>();
+
+    public class Section {
+        Character type; // L, R or S
+        int preferredPower = INITIAL_POWER;
+        int S_cnt = 0;
     }
 
     /**
@@ -92,9 +112,9 @@ public class PowerUpUntilPenalty extends UntypedActor {
     private void handleRaceStart() {
         currentPower = 0;
         gyrozHistory = new FloatingHistory(8);
-        currentSection = SECTION.STILL_STANDING;
+        currentSection = SECTION_E.STILL_STANDING;
         newSection = false;
-        trackFound = false;
+        weDiscoveredTheMap = false;
         lastGyrozValues.clear();
         lastIncrease = 0;
         probing = true;
@@ -107,22 +127,19 @@ public class PowerUpUntilPenalty extends UntypedActor {
         kobayashi.tell(new PowerAction((int) currentPower), getSelf());
         probing = false;
 
-        track_since_lost = "";
-
-        // Got stuck
-        is_lost = true;
-
-
-
+        if (weDiscoveredTheMap) {
+            int pos = myPositionOnTheTrackIs - 1;
+            if (pos < 0)
+                pos = map.size() - 1;
+            map.get(pos).preferredPower -= 10;
+        }
     }
-
-    private int maxNbLastGyrozValues = 4;
 
     private boolean isLeftCurve(ArrayList<Double> lastValues) {
         if (lastValues.size() < maxNbLastGyrozValues)
             return false;
 
-        if (currentSection == SECTION.LEFT_CURVE || currentSection == SECTION.RIGHT_CURVE)
+        if (currentSection == SECTION_E.LEFT_CURVE || currentSection == SECTION_E.RIGHT_CURVE)
             return false;
 
         for (Double f : lastValues) {
@@ -137,7 +154,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
         if (lastValues.size() < maxNbLastGyrozValues)
             return false;
 
-        if (currentSection == SECTION.RIGHT_CURVE || currentSection == SECTION.LEFT_CURVE)
+        if (currentSection == SECTION_E.RIGHT_CURVE || currentSection == SECTION_E.LEFT_CURVE)
             return false;
 
         for (Double f : lastValues) {
@@ -152,8 +169,10 @@ public class PowerUpUntilPenalty extends UntypedActor {
         if (lastValues.size() < maxNbLastGyrozValues)
             return false;
 
-        if (currentSection == SECTION.STRAIGHT)
+        if (currentSection == SECTION_E.STRAIGHT){
+            S_cnt++;
             return false;
+        }
 
         for (Double f : lastValues) {
             if (f < -500 || f > 500)
@@ -176,63 +195,106 @@ public class PowerUpUntilPenalty extends UntypedActor {
             lastGyrozValues.remove(0);
         }
         lastGyrozValues.add(gyrz);
-        //show((int) gyrz);
+        show((int) gyrz);
 
         if (iAmStillStanding()) {
-            increase(2);
+            increase(1);
             kobayashi.tell(new PowerAction((int) currentPower), getSelf());
             return;
         }
 
-        if (!trackFound && currentPower < INITIAL_POWER) {
+        if (!weDiscoveredTheMap && currentPower < INITIAL_POWER) {
             increase(1);
         }
 
-        if (trackFound && probing && message.getTimeStamp() > lastIncrease + duration) {
+        if (weDiscoveredTheMap && probing && message.getTimeStamp() > lastIncrease + 20000) {
             lastIncrease = message.getTimeStamp();
-            increase(3);
+            increase(10);
         }
 
+        String s = triWay();
 
-        if(!trackFound) {
-            track = track + triWay();
-            if (!TrackPattern.recognize(track).isEmpty()) {
-                trackFound = true;
-                System.out.println("FOUND: " + TrackPattern.recognize(track));
-                is_lost = false;
-                track = TrackPattern.recognize(track);
-                current_position_index = 0;
+        if(!s.isEmpty()) {
+            history = history + s;
+            if (s.equals("S")) {
+                System.out.println("S_cnt: " + S_cnt);
+                S_cnts.add(S_cnt);
+                S_cnt = 0;
             }
-        } else if(!is_lost){
-            String s = triWay();
-            if(!s.isEmpty()) {
-                if(track.charAt(current_position_index) != s.charAt(0)) {
-                    is_lost = true;
-                } else {
-                    current_position_index = (current_position_index+1)%track.length();
-                }
-            }
-        }
+            System.out.println(history);
+            System.out.println("Entering " + s + " curve");
 
-        if(is_lost) {
-            String s = triWay();
-            if(!s.isEmpty()){
-                track_since_lost = track_since_lost+s;
-                int i = findIndex();
-                System.out.println("Track since lost : " + track_since_lost);
-                System.out.println("Track : " + track);
-                if(i > -1) {
-                    System.out.println("Found at index : " + (i%track.length()));
+            if (weDiscoveredTheMap)
+                myPositionOnTheTrackIs = (myPositionOnTheTrackIs + 1) % map.size();
+
+            if (!weDiscoveredTheMap) {
+                track = track + s;
+                String mapAsString = TrackPattern.recognize(track);
+                if (!mapAsString.isEmpty()) {
+                    weDiscoveredTheMap = true;
+                    System.out.println("FOUND: " + mapAsString);
+                    for (Character sectionAsChar : mapAsString.toCharArray()) {
+                        Section section = new Section();
+                        section.type = sectionAsChar;
+                        section.preferredPower = INITIAL_POWER;
+                        map.add(section);
+                    }
                     is_lost = false;
-                    current_position_index = (i+track_since_lost.length())%track.length();
-                    track_since_lost = "";
-                    System.out.println("Got back in track !!");
+                    track = mapAsString;
+
+                    int j = S_cnts.size() - 1;
+                    for (int i = map.size() - 1; i >= 0; i--) {
+                        Section section = map.get(i);
+                        if (section.type != 'S')
+                            continue;
+                        section.S_cnt = S_cnts.get(j);
+                        if (section.S_cnt > LONG_STRAIGHT_THRESHOLD) {
+                            section.preferredPower = LONG_STRAIGHT_PREFERRED_POWER;
+                        }
+                        j--;
+                    }
+
+                    myPositionOnTheTrackIs = 0;
                 }
             }
+
+
+            if (weDiscoveredTheMap) {
+                int pos = myPositionOnTheTrackIs - 1;
+                if (pos < 0)
+                    pos = map.size() - 1;
+                System.out.println("Pilot going at " + map.get(pos).preferredPower);
+                kobayashi.tell(new PowerAction(map.get(pos).preferredPower), getSelf());
+            } else {
+                kobayashi.tell(new PowerAction((int) currentPower), getSelf());
+            }
+
+
+            if (weDiscoveredTheMap && !is_lost) {
+                if (!s.isEmpty()) {
+                    if (track.charAt(myPositionOnTheTrackIs) != s.charAt(0)) {
+                        is_lost = true;
+                    } else {
+                        myPositionOnTheTrackIs = (myPositionOnTheTrackIs + 1) % track.length();
+                    }
+                }
+            } else if (weDiscoveredTheMap && is_lost) {
+                if (!s.isEmpty()) {
+                    track_since_lost = track_since_lost + s;
+                    int i = findIndex();
+                    System.out.println("Track since lost : " + track_since_lost);
+                    System.out.println("Track : " + track);
+                    if (i > -1) {
+                        System.out.println("Found at index : " + (i % track.length()));
+                        is_lost = false;
+                        myPositionOnTheTrackIs = (i + track_since_lost.length()) % track.length();
+                        track_since_lost = "";
+                        System.out.println("Got back in track !!");
+                    }
+                }
+            }
+            kobayashi.tell(new PowerAction((int) currentPower), getSelf());
         }
-        history = history+triWay();
-        //System.out.println("History" + history);
-        kobayashi.tell(new PowerAction((int) currentPower), getSelf());
     }
 
     private int findIndex() {
@@ -260,13 +322,13 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     private String triWay() {
         if (isLeftCurve(lastGyrozValues)) {
-            currentSection = SECTION.LEFT_CURVE;
+            currentSection = SECTION_E.LEFT_CURVE;
             return "L";
         } else if (isRightCurve(lastGyrozValues)) {
-            currentSection = SECTION.RIGHT_CURVE;
+            currentSection = SECTION_E.RIGHT_CURVE;
             return "R";
         } else if (isStraight(lastGyrozValues)) {
-            currentSection = SECTION.STRAIGHT;
+            currentSection = SECTION_E.STRAIGHT;
             return "S";
         }
         return "";
