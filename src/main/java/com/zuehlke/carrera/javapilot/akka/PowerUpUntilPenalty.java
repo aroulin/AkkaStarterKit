@@ -3,6 +3,7 @@ package com.zuehlke.carrera.javapilot.akka;
 import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.actor.UntypedActor;
+import com.fasterxml.jackson.annotation.ObjectIdGenerators;
 import com.zuehlke.carrera.relayapi.messages.PenaltyMessage;
 import com.zuehlke.carrera.relayapi.messages.RaceStartMessage;
 import com.zuehlke.carrera.relayapi.messages.SensorEvent;
@@ -10,7 +11,6 @@ import com.zuehlke.carrera.timeseries.FloatingHistory;
 import org.apache.commons.lang.StringUtils;
 
 import java.util.ArrayList;
-
 public class PowerUpUntilPenalty extends UntypedActor {
 
     private final ActorRef kobayashi;
@@ -19,16 +19,16 @@ public class PowerUpUntilPenalty extends UntypedActor {
     private final int INITIAL_POWER = 105;
 
     // Current state variables
-    private double currentPower = 0;
+    private int currentPower = 0;
     private SECTION_E currentSection = SECTION_E.STILL_STANDING;
     private int currentSectionIndex = 0;
 
     // Phase variables
     private PHASE_E prevPhase;
-    private PHASE_E currentPhase = PHASE_E.WARMUP;
+    private PHASE_E currentPhase = PHASE_E.DISCOVERY;
 
     // Safe power computation variables
-    private double safePower = INITIAL_POWER;
+    private int safePower = INITIAL_POWER;
     private boolean TryingToIncreaseSafePower = true;
     private long lastIncreaseTimeToSafePower = 0;
 
@@ -45,8 +45,8 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     public class Section {
         String direction;
-        double entry_power;
-        double leaving_power;
+        int entry_power;
+        int leaving_power;
         long lengthInSeconds;
         long dt;
         boolean downgraded;
@@ -57,7 +57,6 @@ public class PowerUpUntilPenalty extends UntypedActor {
     }
 
     enum PHASE_E {
-        WARMUP,
         DISCOVERY,
         SAFESPEED,
         LOST,
@@ -97,8 +96,11 @@ public class PowerUpUntilPenalty extends UntypedActor {
             handleSensorEvent((SensorEvent) message);
 
         } else if (message instanceof PenaltyMessage) {
-            handlePenaltyMessage();
-
+            if(safeDiscover){
+                safeDiscoverHandlePenaltyMessage();
+            } else {
+                handlePenaltyMessage();
+            }
         } else if (message instanceof RaceStartMessage) {
             handleRaceStart();
 
@@ -112,7 +114,6 @@ public class PowerUpUntilPenalty extends UntypedActor {
         currentPower = 0;
         currentSection = SECTION_E.STILL_STANDING;
         currentSectionIndex = 0;
-        currentPhase = PHASE_E.WARMUP;
 
         // Safe power computation variables
         safePower = INITIAL_POWER;
@@ -145,6 +146,18 @@ public class PowerUpUntilPenalty extends UntypedActor {
         kobayashi.tell(new PowerAction((int) currentPower), getSelf());
         TryingToIncreaseSafePower = false;
         handleLastSection();
+    }
+
+    private void safeDiscoverHandlePenaltyMessage() {
+        safeDiscovFirstPenalty = true;
+        if(currentPhase == PHASE_E.DISCOVERY) {
+            handlePenaltyMessage();
+            discovSkipFirstSection = true;
+            discov_times = new ArrayList<>();
+            track = "";
+        } else {
+            handleLastSection();
+        }
     }
 
     private boolean isLeftCurveComingNext() {
@@ -193,8 +206,6 @@ public class PowerUpUntilPenalty extends UntypedActor {
         return true;
     }
 
-    private PHASE_E previousPhase;
-
     /**
      * Strategy: increase quickly when standing still to overcome haptic friction
      * then increase slowly. Probing currentPhase will be ended by the first penalty
@@ -213,22 +224,19 @@ public class PowerUpUntilPenalty extends UntypedActor {
         // Do we want to show gyro values ?
         //show((int) gyrz);
 
-        if (previousPhase != currentPhase) {
-            System.out.println(currentPhase);
-            previousPhase = currentPhase;
-        }
-
         switch (currentPhase) {
-            case WARMUP:
-                warmup();
             case DISCOVERY:
-                discover(message);
+                if(safeDiscover) {
+                    safeDiscover(message);
+                } else {
+                    discover(message);
+                }
                 break;
             case SAFESPEED:
                 safePower(message);
                 break;
             case LOST:
-                lostRecovery();
+                lostRecovery(message);
                 break;
             case OPTIMIZE:
                 optimize(message);
@@ -237,19 +245,15 @@ public class PowerUpUntilPenalty extends UntypedActor {
         kobayashi.tell(new PowerAction((int) currentPower), getSelf());
     }
 
-    private void warmup() {
-        if (isStandingStill() || currentPower < INITIAL_POWER) {
-            increase(1);
-        } else {
-            currentPhase = PHASE_E.DISCOVERY;
-        }
-    }
-
     boolean discovSkipFirstSection = true;
     ArrayList<Long> discov_times = new ArrayList<>();
     long discoverBegin;
 
     private void discover(SensorEvent message) {
+        if (isStandingStill() || currentPower < INITIAL_POWER) {
+            increase(1);
+        }
+
         String directionChange = getDirChange();
         if (!directionChange.isEmpty() && !discovSkipFirstSection) {
             if(message.getTimeStamp() - discoverBegin > 60000) {
@@ -257,9 +261,9 @@ public class PowerUpUntilPenalty extends UntypedActor {
             }
             discov_times.add(message.getTimeStamp());
             track = track + directionChange;
-            //System.out.println(discov_times);
+            System.out.println(discov_times);
             addMap(directionChange, 0, currentPower);
-            //System.out.println(map);
+            System.out.println(map);
             System.out.println(track);
             System.out.println(directionChange);
             lap = TrackPattern.recognize(track);
@@ -267,7 +271,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
                 currentPhase = PHASE_E.SAFESPEED;
                 addDelays(map, discov_times);
-                System.out.println("FOUND" + map);
+                System.out.println(map);
                 System.out.println(lap);
                 currentSectionIndex = 0;
             }
@@ -278,7 +282,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
 
     }
 
-    private void addMap(String dir, long delay, double power) {
+    private void addMap(String dir, long delay, int power) {
         Section s = new Section();
         s.direction = dir;
         s.entry_power = power;
@@ -319,18 +323,66 @@ public class PowerUpUntilPenalty extends UntypedActor {
                     currentPhase = PHASE_E.OPTIMIZE;
                 }
             }
-            safePower = Double.max(safePower, currentPower);
+            safePower = Integer.max(safePower, currentPower);
             currentSectionIndex = (currentSectionIndex + 1) % lap.length();
         }
     }
 
+    private boolean safeDiscover = true;
+    private boolean safeDiscovFirstPenalty = false;
+
+    private void safeDiscover(SensorEvent message) {
+        if (currentPower < INITIAL_POWER) {
+            increase(1);
+        }
+
+        if (TryingToIncreaseSafePower) {
+            if (message.getTimeStamp() > lastIncreaseTimeToSafePower + duration) {
+                lastIncreaseTimeToSafePower = message.getTimeStamp();
+                increase(3);
+            }
+        }
+        safePower = Integer.max(safePower, currentPower);
+        if(safeDiscovFirstPenalty) {
+            String directionChange = getDirChange();
+            if (!directionChange.isEmpty() && !discovSkipFirstSection) {
+                discov_times.add(message.getTimeStamp());
+                track = track + directionChange;
+                System.out.println(discov_times);
+                addMap(directionChange, 0, currentPower);
+                System.out.println(map);
+                System.out.println(track);
+                System.out.println(directionChange);
+                lap = TrackPattern.recognize(track);
+                if (!lap.isEmpty()) {
+                    currentPhase = PHASE_E.OPTIMIZE;
+                    addDelays(map, discov_times);
+                    optMap();
+                    System.out.println(map);
+                    System.out.println(lap);
+                    currentSectionIndex = 0;
+                }
+            } else if (!directionChange.isEmpty()) {
+                discovSkipFirstSection = false;
+                discoverBegin = message.getTimeStamp();
+            }
+        }
+    }
+
     private void optMap() {
-        map.stream().filter(s -> s.direction.equals("S")).forEach(s -> {
-            s.entry_power = (safePower) * 1.1;
-            s.leaving_power = (INITIAL_POWER);
-            s.dt = (long) (s.lengthInSeconds * 0.2);
-            s.downgraded = false;
-        });
+        for(Section s : map) {
+            if(s.direction == "S") {
+                s.entry_power = (safePower) + safePower/10;
+                s.leaving_power = (INITIAL_POWER);
+                s.dt = (long) (s.lengthInSeconds * 0.2);
+                s.downgraded = false;
+            } else {
+                s.entry_power = (safePower);
+                s.leaving_power = safePower+safePower/3;
+                s.dt=(long) (s.lengthInSeconds * 0.65);
+                s.downgraded = false;
+            }
+        }
     }
 
     private void lostRecovery(String direction) {
@@ -344,7 +396,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
         }
     }
 
-    private void lostRecovery() {
+    private void lostRecovery(SensorEvent message) {
         String dir = getDirChange();
         if (!dir.isEmpty()) {
             lostRecovery(dir);
@@ -373,27 +425,28 @@ public class PowerUpUntilPenalty extends UntypedActor {
     long wait_timestamp = 0;
 
     long optimizeBeginTimestamp;
-    double next_power_value = 0;
+    int next_power_value = safePower;
 
     Section lastSection;
     boolean reachedOptimize;
-
     private void optimize(SensorEvent message) {
         String dir = getDirChange();
         reachedOptimize = true;
         if (!dir.isEmpty()) {
-
             optimizeBeginTimestamp = 0;
 
-            Section s = map.get(currentSectionIndex);
-            lastSection = s;
-            currentSectionIndex = (currentSectionIndex + 1) % lap.length();
-
-            if (s.direction.equals("S")) {
+            if(dir.charAt(0) != lap.charAt(currentSectionIndex)) {
+                currentPower = safePower;
+                prevPhase = PHASE_E.OPTIMIZE;
+                lostRecovery(dir);
+            } else {
+                Section s = map.get(currentSectionIndex);
+                lastSection = s;
+                currentSectionIndex = (currentSectionIndex + 1) % lap.length();
                 wait_timestamp = s.dt;
                 currentPower = s.entry_power;
                 next_power_value = s.leaving_power;
-                if(!s.downgraded) {
+                if (!s.downgraded) {
                     upgrade(s);
                 }
                 optimizeBeginTimestamp = message.getTimeStamp();
@@ -409,15 +462,24 @@ public class PowerUpUntilPenalty extends UntypedActor {
     }
 
     private void upgrade(Section s) {
-        s.dt = (long) (s.dt*1.1);
-        s.entry_power = s.entry_power*1.1;
+        if (s.direction.equals("S")) {
+            s.dt = (long) (s.dt * 1.1);
+            s.entry_power = Integer.min(s.entry_power + s.entry_power / 10, 255);
+        }
     }
 
     private void downgrade(Section s) {
-        s.dt = (long) (s.dt*0.9);
-        s.downgraded = true;
-        s.entry_power = s.entry_power*0.9;
+        if (s.direction.equals("S")) {
+            s.dt = (long) (s.dt * 0.9);
+            s.downgraded = true;
+            s.entry_power = s.entry_power - s.entry_power / 10;
+        } else {
+            s.dt = (long) (s.dt * 0.9);
+            s.downgraded = true;
+            s.leaving_power = s.entry_power;
+        }
     }
+
 
     private void handleLastSection() {
         if(reachedOptimize) {
@@ -441,7 +503,7 @@ public class PowerUpUntilPenalty extends UntypedActor {
         return "";
     }
 
-    private int increase(double val) {
+    private int increase(int val) {
         final int MAX_POWER = 200;
         currentPower = Math.min(currentPower + val, MAX_POWER);
         return (int) currentPower;
